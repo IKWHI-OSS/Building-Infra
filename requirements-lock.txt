@@ -1,0 +1,13 @@
+# 오케스트레이터 PoC — 검증된 버전 잠금 (2026-06-18, 샌드박스 동시 import 통과)
+# 깨끗한 venv에 설치 권장(시스템 파이썬 pydantic 충돌 회피).
+langgraph==1.2.5
+langgraph-checkpoint-sqlite==3.1.0
+langchain-core==1.4.7
+langchain-anthropic==1.4.6
+anthropic==0.109.2
+langchain-mcp-adapters==0.3.0
+mcp==1.28.0
+aiosqlite==0.22.1
+ddgs==9.14.4
+python-dotenv==1.2.2
+pydantic==2.13.4

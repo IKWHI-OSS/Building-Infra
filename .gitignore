@@ -1,0 +1,14 @@
+# 격리 환경 / 캐시
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# 시크릿
+.env
+*.key
+*.pem
+
+# OS
+.DS_Store
