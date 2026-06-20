@@ -1,25 +1,22 @@
 """L2 노드 5개 — PLAN/OFFER/TOOL/MEMORY/Verify. SPEC §3~§4.
 
-모두 (state) -> dict(부분 갱신). TOOL은 async(MCP 호출).
+작업 지식을 코드로 갖지 않는다. 현재 step의 spec(constraints.steps)을 읽어
+레지스트리에서 액션·검수기를 *이름으로* 찾아 디스패치할 뿐이다. 작업이 바뀌어도
+이 파일은 그대로다 — 바뀌는 건 spec과 handlers뿐.
 """
-import os
-from .state import STEP_ORDER
-from .llm import llm_call
-from .mcp_tools import mcp_search
-from .util import log
+from .registry import get_action, get_checker
+from .util import log, step_by_id
 
 
 def plan_node(state) -> dict:
+    """spec.steps로 plan을 만들거나(최초), 다음 pending step으로 전진."""
+    steps = state["constraints"]["steps"]
     if not state["plan"]:
-        crit = state["constraints"]["definition"]["criteria"]
-        plan = [
-            {"step_id": "s1", "subgoal": "비교기준 정의", "priority": 1, "depends_on": [], "status": "pending"},
-            {"step_id": "s2", "subgoal": "대상별 웹검색(fan-out)", "priority": 2, "depends_on": ["s1"], "status": "pending"},
-            {"step_id": "s3", "subgoal": "차이분석", "priority": 3, "depends_on": ["s2"], "status": "pending"},
-            {"step_id": "s4", "subgoal": "결과요약", "priority": 4, "depends_on": ["s3"], "status": "pending"},
-        ]
-        log(state, "PLAN", "build_plan", "ok", rout=f"{len(plan)} steps, criteria={crit}")
-        return {"plan": plan, "cursor": "s1"}
+        plan = [{"step_id": s["step_id"], "subgoal": s["subgoal"], "priority": i + 1,
+                 "depends_on": s["depends_on"], "status": "pending"}
+                for i, s in enumerate(steps)]
+        log(state, "PLAN", "build_plan", "ok", rout=f"{len(plan)} steps")
+        return {"plan": plan, "cursor": plan[0]["step_id"]}
     cur = state["cursor"]
     nxt = next((s["step_id"] for s in state["plan"] if s["status"] == "pending"), None)
     log(state, "PLAN", "advance", "ok", rin=f"from {cur}", rout=f"to {nxt}")
@@ -27,55 +24,33 @@ def plan_node(state) -> dict:
 
 
 def offer_node(state) -> dict:
+    """현재 step의 action을 정하고, 최소권한(requires_tool)을 constraints에 대조. SPEC §4.
+
+    도구가 화이트리스트에 없으면 실행경로를 1차 차단(_offer_block) → TOOL은 건너뛰고
+    Verify가 그 verdict를 그대로 통과시킨다.
+    """
     cur = state["cursor"]
-    targets = state["constraints"]["definition"]["targets"]
+    step = step_by_id(state, cur)
     scratch = dict(state["scratch"])
-    if cur == "s1":
-        scratch["action"] = {"type": "define", "criteria": state["constraints"]["definition"]["criteria"]}
-    elif cur == "s2":
-        if "web_search_specs" not in state["constraints"]["allowed_tools"]:
-            log(state, "OFFER", "reject_tool", "fail", cause="tool_not_allowed")
-            return {"scratch": scratch, "verdict": {"passed": False, "cause": "tool_not_allowed"}}
-        retrying = scratch.get("s2_retry", False)
-        force = os.environ.get("FORCE_S2_FAIL") == "1"   # 차단기 데모: 항상 실패
-        broken = force or not retrying                    # 첫 시도 한 대상 검색실패(+force면 영구)
-        scratch["action"] = {"type": "extract", "targets": targets,
-                             "fail_target": (targets[-1] if broken else None)}
-    elif cur == "s3":
-        scratch["action"] = {"type": "compare"}
-    elif cur == "s4":
-        scratch["action"] = {"type": "summarize"}
-    log(state, "OFFER", f"decide:{scratch['action']['type']}", "ok", rin=cur)
+    req = step.get("requires_tool")
+    if req and req not in state["constraints"]["allowed_tools"]:
+        scratch["_offer_block"] = {"passed": False, "cause": "tool_not_allowed"}
+        log(state, "OFFER", "reject_tool", "fail", cause="tool_not_allowed", rin=cur)
+        return {"scratch": scratch}
+    scratch["action"] = {"type": step["action"]}
+    log(state, "OFFER", f"decide:{step['action']}", "ok", rin=cur)
     return {"scratch": scratch}
 
 
 async def tool_node(state) -> dict:
-    act = state["scratch"].get("action", {})
+    """현재 action 이름으로 핸들러를 디스패치(부작용 경계). SPEC §3 TOOL."""
+    if state["scratch"].get("_offer_block"):           # OFFER가 차단 → 도구 실행 안 함
+        return {}
+    t = state["scratch"].get("action", {}).get("type")
+    if not t:
+        return {}
     artifacts = dict(state["artifacts"])
-    t = act.get("type")
-    if t == "define":
-        artifacts["criteria"] = act["criteria"]
-        log(state, "TOOL", "define", "ok", rout=str(act["criteria"]))
-    elif t == "extract":
-        specs = {}
-        for m in act["targets"]:
-            if act.get("fail_target") == m:                      # 의도적 실패: 빈 결과
-                specs[m] = {"model": m, "snippets": [], "sources": []}
-            else:
-                specs[m] = await mcp_search(m)                    # 실 MCP 웹검색
-        artifacts["specs"] = specs
-        got = sum(1 for s in specs.values() if s.get("sources"))
-        log(state, "TOOL", "web_search", "ok", rout=f"{got}/{len(specs)} targets via MCP")
-    elif t == "compare":
-        artifacts["analysis"] = llm_call("compare", {
-            "criteria": state["constraints"]["definition"]["criteria"],
-            "specs": state["artifacts"].get("specs", {})})
-        log(state, "TOOL", "compare", "ok")
-    elif t == "summarize":
-        artifacts["summary"] = llm_call("summarize", {
-            "analysis": state["artifacts"].get("analysis", ""),
-            "specs": state["artifacts"].get("specs", {})})
-        log(state, "TOOL", "summarize", "ok")
+    await get_action(t)(state, artifacts)
     return {"artifacts": artifacts}
 
 
@@ -87,24 +62,15 @@ def memory_node(state) -> dict:
 
 
 def verify_node(state) -> dict:
+    """현재 step의 acceptance.kind로 검수기를 디스패치 → verdict. SPEC §6."""
+    blk = state["scratch"].get("_offer_block")
+    if blk:                                            # OFFER 차단 verdict를 그대로 통과
+        scratch = dict(state["scratch"])
+        scratch.pop("_offer_block", None)
+        log(state, "Verify", "verify:blocked", "fail", cause=blk["cause"])
+        return {"verdict": blk, "scratch": scratch}
     cur = state["cursor"]
-    crit = state["constraints"]["definition"]["criteria"]
-    targets = state["constraints"]["definition"]["targets"]
-    art = state["artifacts"]
-    if cur == "s1":
-        v = {"passed": bool(art.get("criteria")), "cause": None if art.get("criteria") else "empty_criteria"}
-    elif cur == "s2":
-        specs = art.get("specs", {})
-        ok = all(specs.get(m, {}).get("snippets") and specs.get(m, {}).get("sources") for m in targets)
-        v = {"passed": ok, "cause": None if ok else "missing_source"}
-    elif cur == "s3":
-        v = {"passed": bool(art.get("analysis")), "cause": None if art.get("analysis") else "no_analysis"}
-    elif cur == "s4":
-        sources = [s for sp in art.get("specs", {}).values() for s in sp.get("sources", [])]
-        judge = llm_call("judge", {"summary": art.get("summary", ""), "criteria": crit, "sources": sources})
-        ok = judge.strip().upper().startswith("PASS")
-        v = {"passed": ok, "cause": None if ok else "judge_reject", "detail": judge[:300]}
-    else:
-        v = {"passed": False, "cause": "unknown_step"}
+    acc = step_by_id(state, cur)["acceptance"]
+    v = get_checker(acc["kind"])(state, acc)
     log(state, "Verify", f"verify:{cur}", "ok" if v["passed"] else "fail", cause=v["cause"])
     return {"verdict": v}

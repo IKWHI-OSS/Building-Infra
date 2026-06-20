@@ -8,25 +8,21 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.memory import InMemoryStore
 
-from .state import AgentContext, STEP_ORDER
+from .state import AgentContext
 from .util import log
 from .nodes import plan_node, offer_node, tool_node, memory_node, verify_node
-
-# 원인코드 -> (retriable?, corrective)
-DIAGNOSIS = {
-    "missing_source":   (True, "s2_retry"),
-    "no_analysis":      (True, None),
-    "judge_reject":     (True, None),
-    "tool_not_allowed": (False, None),
-}
+from . import handlers  # noqa: F401  (액션/검수기 레지스트리 등록 트리거)
 
 
-def _retriable(v) -> bool:
-    return DIAGNOSIS.get(v.get("cause"), (False, None))[0]
+def _diag(state, cause):
+    """spec의 DIAGNOSIS 표에서 (retriable?, corrective) 조회. 미진단=재시도 불가."""
+    entry = state["constraints"].get("diagnosis", {}).get(cause, [False, None])
+    return entry[0], entry[1]
 
 
 def _is_last_step(state) -> bool:
-    return state["cursor"] == STEP_ORDER[-1]
+    steps = state["constraints"]["steps"]
+    return state["cursor"] == steps[-1]["step_id"]
 
 
 def orc_node(state) -> dict:
@@ -56,7 +52,7 @@ def orc_node(state) -> dict:
 
     b["retry"] -= 1                                 # 유계 재시도
     b["consec_fail"] += 1
-    retriable, corrective = DIAGNOSIS.get(v["cause"], (False, None))
+    retriable, corrective = _diag(state, v["cause"])
     if retriable:
         if corrective:
             scratch[corrective] = True

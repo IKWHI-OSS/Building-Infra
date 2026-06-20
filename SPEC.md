@@ -1,6 +1,7 @@
 # SPEC — 멀티에이전트 오케스트레이터 PoC (LangGraph)
 
-> 상태: **v0.4 (.py 모듈 졸업 완료)**. 구현 = `orc/` 패키지(state·llm·mcp_tools·nodes·orchestrator·run) + `mcp_model_tool.py` + 프로토타입 `orchestrator_slice.ipynb`. 실 LLM+실검색 e2e 확정(A=DONE), 모듈판 `python -m orc.run` 동등성 검증.
+> 상태: **v0.5 (범용화 — 작업 specifics를 설정으로 분리)**. 엔진(orchestrator/nodes/state)은 작업 지식을 코드로 갖지 않고, 무엇을·어떤 순서로·어떤 기준으로 할지는 전부 `TaskSpec`(specs.py)이 데이터로 들고 있다. 한 엔진(`build_app`)이 두 spec(`compare` 실 LLM+검색 / `ingest_demo` 결정적·키리스)을 그대로 돌려 도메인 무관을 *실증*. 액션·검수기는 `registry.py`로 디스패치, 작업별 구현은 `handlers_*.py`.
+> v0.4 (.py 모듈 졸업 완료). 구현 = `orc/` 패키지(state·llm·mcp_tools·nodes·orchestrator·run) + `mcp_model_tool.py` + 프로토타입 `orchestrator_slice.ipynb`. 실 LLM+실검색 e2e 확정(A=DONE), 모듈판 `python -m orc.run` 동등성 검증.
 > v0.3에서 TOOL이 in-process mock → **별도 프로세스 웹검색 MCP 서버(키리스 DuckDuckGo)**로 교체됨. 데이터 출처가 내부 하드코딩이 아니라 외부 real URL.
 > 정본 설계: `cowork/knowledge/multiagent-orchestrator-template.md` (v0.1) + `2026-06-17-checkpoint-오케스트레이터PoC.md`.
 > 이력/원격: GitHub `IKWHI-OSS/Building-Infra` (branch main) — 인프라·프로젝트설정·데이터선정 문서만.
@@ -223,4 +224,5 @@ _v0.1 2026-06-17 — 에이전트 초안._
 _v0.2 2026-06-18 — 유저 검토 후 수직 슬라이스 빌드. `orchestrator_slice.ipynb`로 e2e 검증(A/B 시나리오 nbconvert 통과)._
 _v0.3 2026-06-18 — TOOL = 실 MCP 웹검색 교체. `mcp_model_tool.py`(stdio, 키리스 DDG, MCP_OFFLINE 듀얼모드) + langchain-mcp-adapters. tool_node async화 → app.ainvoke + AsyncSqliteSaver. s2 acceptance: 스키마충족 → 대상별 스니펫·출처 존재. 의도적 실패: 한 대상 검색실패(missing_source). 다음 = 실LLM+실검색 품질검토 → .py 모듈 졸업._
 _v0.4 2026-06-19 — .py 모듈 졸업. 노트북 로직을 `orc/` 패키지로 분리(state/llm/mcp_tools/nodes/orchestrator/run + util). build_app async화(AsyncSqliteSaver), run.py가 asyncio.run 래퍼 + .env 자동로드, MCP 서버 경로는 sys.executable+패키지 상위 resolve. `python -m orc.run` 동등성 검증(A=DONE/B=FAILED). 노트북은 인터랙티브 프로토타입으로 유지. 커서 전환 대상. orc/README.md 참조._
+_v0.5 2026-06-20 — 범용화(작업 1). 작업 specifics(goal·definition·allowed_tools·forbidden·steps·diagnosis)를 코드에서 분리해 `TaskSpec`(specs.py)으로. 엔진은 spec을 읽어 도는 제네릭 디스패처: `registry.py`(액션/검수기 등록), `handlers_compare.py`(실 LLM+검색)·`handlers_ingest.py`(결정적 로컬 적재 루프)·`handlers_common.py`(공용 검수기). `initial_state(spec)`, nodes는 step의 action/acceptance를 이름으로 디스패치, orchestrator는 DIAGNOSIS를 spec에서 읽음. `python -m orc.run compare|ingest_demo` 둘 다 같은 build_app에서 A=DONE/B=FAILED 확인(샌드박스, 키·네트워크 없이). 부수효과: tool_not_allowed 차단경로를 `_offer_block`으로 정정(v0.4까진 verify가 덮어쓰던 미검증 버그). 범위 밖 유지: 서로 다른 *워크플로 모양*의 임의 일반화는 아직 — compare/ingest_demo로 '설정 교체=다른 작업'까지 실증. ESS(비전+기상+RAG+보고)·실 적재 루프 흡수는 합류 단계._
 _v0.3.1 2026-06-18 — 실 LLM 첫 실행 피드백 반영. 발견: 웹 스니펫에 train_cost/deploy_difficulty 부재 → s4 judge가 "전 기준 커버" 미충족으로 정직하게 reject(차단기 정상 작동, mock 아님의 방증). 수정: ①리포팅을 성공·실패 무관 출처 출력 + judge 사유(verdict.detail) 노출 ②judge·summarize 프롬프트 정렬 — 스니펫에 없는 기준은 '자료없음' 명시하면 '다룸'으로 인정(정직한 데이터 갭이 통과 가능). 환경: `setup_env.sh`+`requirements-lock.txt`(격리 venv, pydantic 충돌 회피)._

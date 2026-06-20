@@ -80,6 +80,23 @@ ORC(순수 라우터) + 5노드(PLAN/OFFER/TOOL/MEMORY/Verify) 상태기계로 "
 - **없는 건 솔직히 없다고.** 배터리 '물성' RAG 텍스트는 AI Hub에 없음(검색으로 확인) → AI Hub 밖에서 찾거나 보류로 명시.
 - **적재 워크플로 = 또 하나의 인스턴스.** 데이터 적재 러너(`scripts/INGEST-AGENT.md`)가 이미 같은 자기검증 루프(Step→verify→DIAGNOSIS→유계재시도→차단기) → orc/의 두 번째 인스턴스 후보(LLM 없는 결정적 형태).
 
+### 5-1. 외부 RAG 출처 검증 (2026-06-20, 물성·발화 + 가연환경·확산)
+AI Hub에 없는 두 RAG 축(**물성·발화 근거**, **가연환경·확산 근거**)을 AI Hub 밖에서 후보 7종으로 좁히고, 출처가 실재·접근가능·텍스트(RAG적합)인지 웹검증함. **7종 전부 실재·접근가능 확정.** 다만 "바로 적재"와 "라이선스 확인"으로 갈림 — 추정으로 등급 매기지 말고 실제 배포형태로 정한 사례.
+
+**물성·발화 근거**
+- **KC 62619**(ESS 리튬이차전지 안전성·오용) — KATS 무료 PDF 실재 확인. 발화·오용 조건 정의의 핵심. → 1순위.
+- **ESS 셀 열폭주 유도 시험방법** — standard.go.kr 직접 다운로드 링크(fileSn) 확인. 71918 열폭주 1~6단계 라벨과 직결. → 1순위.
+- **KS C IEC 62660-2 / KS R ISO 12405-3** — kssn.net 실재하나 **유료·구매 표준** → 본문 재배포(RAG 색인)는 라이선스 확인 후. → 2순위.
+- **논문(ACS Omega 등)** — 벤트가스 가연한계 논문 실재. **ACS Omega는 골드 오픈액세스** → 표의 '중간'보다 적합 상향 가능. ScienceDirect/Nature는 저작권 제약 → 인용·요약 위주.
+
+**가연환경·확산 근거**
+- **소방청 리튬이온 화재예방대책 PDF** — isafe.go.kr 무료 실재(2025-08 최신본 포함). → 1순위.
+- **KFPA 화재안전 웹진** — 무료 HTML, 전기차/ESS 화재 확산·열폭주 다수 기사 실재. → 1순위.
+- **화재확산/벤트가스 논문(H2·CO·HF 분산)** — ACS Omega 가연한계·분산 논문으로 충당, 오픈액세스 분 우선.
+
+**검증으로 바로잡은 표 보정 2건:** ①ACS Omega 벤트가스 논문은 골드 OA라 'RAG 적합 중간 → 높음' 상향 가능. ②kssn.net 표준 2건은 표상 '높음'이나 실제 유료·라이선스라 무료 공식배포(KC 62619·열폭주 시험방법)보다 한 단계 아래로 두는 게 안전.
+- **적재 형태 차이(중요):** 외부 RAG 출처는 AI Hub filekey가 아니라 **직접 URL 다운로드**(kats/standard/isafe/kfpa/pubs.acs) → 71918/71921의 aihubshell 루프와 별개로 `aihub-rag-sources-manifest.md`(직접 URL·라이선스·BK prefix)로 관리. 적재 루프(무결성→업로드→크기검증)는 동일 재사용.
+
 ---
 
 ## 6. 관통하는 방법론 (재학습 핵심)
@@ -90,3 +107,14 @@ ORC(순수 라우터) + 5노드(PLAN/OFFER/TOOL/MEMORY/Verify) 상태기계로 "
 5. **확인이 추정을 이긴다.** 데이터·사실은 이름·기억으로 정하지 말고 직접 보고 정한다(추천이 뒤집힌 71918 사례).
 
 _연관 파일: `constgx/agents/`(SPEC.md, orc/, orchestrator_slice.ipynb, mcp_model_tool.py, setup_env.sh, requirements-lock.txt, COST-MODEL.md, RUNBOOK-real-llm.md), `docs/`(체크포인트)._
+
+---
+
+## 7. cowork MEMORY에서 이관한 설계지식 (2026-06-20 정본화)
+> 아래는 원래 cowork `MEMORY.md`에 있던 인프라 오케스트레이션 설계지식이다. 프로젝트 무관 범용 인프라라 **Building-Infra 레포가 정본**이 맞아 이리로 이관했다(cowork엔 포인터만 남김). 스파게티 방지를 위한 정본 단일화.
+
+**(1) LangGraph "ORC=순수 라우터" 2단 분리 구현** — `orc_node`가 결정을 계산해 `scratch["_route"]`에 적재 → `add_conditional_edges(ORC, route, {...})`의 `route()`는 그걸 읽기만(LLM·분기로직 없음). ORC가 예산(retry/consec_fail)·verdict·현 step done까지 다 기록(완결판정 소유), Verify는 verdict만 반환. 무한루프 방지 = 유계재시도(retry 차감)+연속실패 차단기(consec_fail>=threshold→FAIL). 통과 시 END 분기는 PLAN 전진노드를 안 거치므로 **현 step done 마킹을 ORC 통과분기에서** 처리(안 하면 마지막 step이 pending). recursion_limit는 재시도 고려해 100(기본 25는 부족).
+
+**(2) PoC 테스트 방법론(3스레드)** — 에이전트/통합 PoC는 **위험을 격리해 작은 probe부터 → 통합 → 환경까지 잠금** 순. ①MCP 배관(최소 stdio 서버+get_tools/ainvoke 단독 입증, content블록→json.loads) ②실 LLM 연동(스니펫 텍스트를 LLM 언어이해로 criteria에 대응 — 임베딩/벡터 아님; 샌드박스선 SLICE_OFFLINE 스텁으로 배선만) ③커널/env 격리(호환버전 동시import→requirements-lock→venv+ipykernel 등록, pydantic 충돌 회피). 원칙: 결정적 부분 우선 + 듀얼모드(OFFLINE) + 정직한 실패를 1급 시민으로 + 버전·커널까지 잠금.
+
+**(3) orc 엔진에 인스턴스 장착 패턴 (2026-06-20 실증)** — 엔진은 작업 지식을 코드로 안 갖고, `TaskSpec`(specs.py)이 무엇을·순서·기준을 데이터로 들고, 액션·검수기는 `registry.py` 디스패치, 작업별 구현은 `handlers_*.py`. 이 구조로 **compare(실 LLM, 비결정적)**·**ingest(결정적, 키 없는 I/O)** 두 작업을 한 엔진이 그대로 실행 = 도메인 무관 = 범용화 실증. 적재 인스턴스(`INGEST_AIHUB` spec + `handlers_ingest.py` + `ingest_driver.py`)에서 삭제(g5)는 무결성·크기 두 게이트 통과 후에만 구조적으로 도달. INGEST-AGENT의 게이트/DIAGNOSIS/차단기/HITL과 1:1 매핑. (639건 무인 적재 0 실패로 입증, 2026-06-20.)
