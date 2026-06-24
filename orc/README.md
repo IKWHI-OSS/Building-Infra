@@ -24,6 +24,7 @@ orc/
 ├── handlers_common.py  # 공용 검수기(artifact_non_empty/flag_true)
 ├── handlers_compare.py # 비교 작업: define/extract/compare/summarize + 검수기 (실 LLM+검색)
 ├── handlers_ingest.py  # 적재 데모: fetch/verify_checksum/store + 검수기 (결정적·로컬)
+├── handlers_retriever.py # RAG 검색·응답: embed_query/search_index/rag_answer (실검색은 search_preview.py 하위프로세스=맥 segfault 회피)
 ├── llm.py              # SYS 프롬프트 + llm_call (실 LLM / SLICE_OFFLINE 스텁)  (§6)
 ├── mcp_tools.py        # 웹검색 MCP 서버 호출(mcp_search, async)  (§1·결정2)
 ├── nodes.py            # plan/offer/tool(async)/memory/verify — spec 기반 제네릭 디스패치
