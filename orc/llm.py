@@ -15,9 +15,9 @@ SYS = {
                   "각 추천 근거에 출처 URL(specs의 sources)을 괄호로 반드시 표기."),
     "judge": ("너는 품질 검수자다. summary가 (1) 각 criteria를 다뤘는지 — 수치든 '자료없음'이든 *언급*했으면 다룬 것으로 인정 — "
               "(2) 출처(sources) URL이 표기됐는지 점검. 둘 다 충족이면 첫 줄에 정확히 'PASS'만, 아니면 'FAIL: <부족한 점>'만 출력."),
-    "rag_answer": ("너는 산불 대응 보조자다. 검색된 유사 사례(hits: 각 사례의 주제·연료유형)를 근거로 질문에 답하라. "
-                   "검색 사례에 없는 사실은 추측하지 말고 '검색 근거 부족'이라 밝혀라. "
-                   "답 끝에 참고한 사례 id를 괄호로 표기하라."),
+    "rag_answer": ("너는 산불 대응 보조자다. 검색된 유사 사례(hits: 각 사례의 주제·연료유형과 본문 text)를 근거로 "
+                   "질문에 답하라. 사례 본문(text)의 구체적 판단·조건을 우선 인용하고, 본문에 없는 사실은 "
+                   "추측하지 말고 '검색 근거 부족'이라 밝혀라. 답 끝에 참고한 사례 id를 괄호로 표기하라."),
 }
 
 
@@ -34,6 +34,7 @@ def llm_call(purpose: str, payload: dict) -> str:
     from langchain_core.messages import SystemMessage, HumanMessage
     model = os.environ.get("SLICE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("CLAUDE_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-    llm = ChatAnthropic(model=model, temperature=0, max_tokens=1024, api_key=api_key)
+    llm = ChatAnthropic(model=model, temperature=0, max_tokens=1024, api_key=api_key,
+                        timeout=60, max_retries=2)   # 무한대기 방지(과거 호출이 제한시간 없어 매달림)
     msgs = [SystemMessage(SYS[purpose]), HumanMessage(json.dumps(payload, ensure_ascii=False))]
     return llm.invoke(msgs).content

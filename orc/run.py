@@ -45,6 +45,8 @@ async def run(spec, tag: str, thread_id: str):
             print(f"        {m}: {sp.get('sources', [])[:2]}")
     if art.get("summary"):
         print(f"  --- summary: {art['summary']}")
+    if art.get("answer"):
+        print(f"  --- answer: {art['answer']}")
     if art.get("stored"):
         for it, s in art["stored"].items():
             print(f"  --- stored {it}: size={s['size']} (expected {s['expected_size']})")

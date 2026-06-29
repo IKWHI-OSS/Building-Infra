@@ -24,6 +24,19 @@ def _offline() -> bool:
     return os.environ.get("RAG_OFFLINE") == "1"
 
 
+def _ensure_index(d):
+    """영구 보관 안전장치 — index_dir이 비었으면(재부팅·삭제로 휘발) gcs_index에서 자동 재다운로드.
+    고정 경로(rag_index/idx_full)가 정상이면 아무 일도 안 함(무과금)."""
+    idx = d["index_dir"]
+    if os.path.exists(os.path.join(idx, "index.faiss")):
+        return
+    gcs = d.get("gcs_index")
+    if not gcs:
+        raise FileNotFoundError(f"색인 없음: {idx} (gcs_index 미설정 → 자동복구 불가)")
+    os.makedirs(os.path.dirname(idx), exist_ok=True)
+    subprocess.run(["gcloud", "storage", "cp", "-r", gcs, os.path.dirname(idx) + "/"], check=True)
+
+
 # 배선 검증용 고정 결과(실 인덱스/모델/키 없이 라우팅·차단기 확인)
 _FIXTURE_HITS = [
     {"id": "case_A.json", "query_subject": "확산경로", "fuel_type": "혼효림"},
@@ -63,6 +76,7 @@ async def _search_index(state, artifacts):
         artifacts["hits"] = list(_FIXTURE_HITS)[: d.get("topk", 5)]
         log(state, "TOOL", "search_index", "ok", rout=f"{len(artifacts['hits'])} hits (offline)")
         return
+    _ensure_index(d)                                    # 영구 보관: 색인 휘발 시 버킷에서 자동 복구
     work = d["work"]
     res = os.path.join(work, "orc_res.jsonl")
     subprocess.run([d["py"], d["search_preview"], "search",
@@ -92,12 +106,32 @@ def _load_meta(path, want):
     return out
 
 
+def _load_bodies(corpus_path, want_ids, cap=900):
+    """rag_units.jsonl을 흘려읽어 검색된 case id들의 본문(text)만 모은다(전부 찾으면 조기 종료)."""
+    want = set(want_ids); out = {}
+    if not corpus_path or not os.path.exists(corpus_path):
+        return out
+    with open(corpus_path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            u = json.loads(line)
+            if u["id"] in want:
+                out[u["id"]] = (u.get("text", "") or "")[:cap]
+                if len(out) == len(want):
+                    break
+    return out
+
+
 @action("rag_answer")
 async def _rag_answer(state, artifacts):
     d = state["constraints"]["definition"]
-    artifacts["answer"] = llm_call("rag_answer",
-                                   {"query": d["query"], "hits": artifacts.get("hits", [])})
-    log(state, "TOOL", "rag_answer", "ok")
+    hits = artifacts.get("hits", [])
+    if not _offline() and d.get("corpus"):                   # 본문 근거 주입(실모드)
+        bodies = _load_bodies(d["corpus"], [h["id"] for h in hits])
+        hits = [{**h, "text": bodies.get(h["id"], "")} for h in hits]
+    artifacts["answer"] = llm_call("rag_answer", {"query": d["query"], "hits": hits})
+    log(state, "TOOL", "rag_answer", "ok", rout=f"{len(hits)} 사례 근거")
 
 
 @acceptance("hits_nonempty")

@@ -200,12 +200,14 @@ INGEST_AIHUB.name = "ingest_aihub"
 # 회피로 검색은 search_preview.py 하위프로세스(embed/search 분리, handlers_retriever.py).
 # 회복/차단기: r2(검색)에 first_attempt_fails — 첫 시도 빈결과→r2_retry→재검색 성공(시나리오 A),
 # FORCE_FAIL_STEP=r2면 영구 빈결과→연속실패 차단기(시나리오 B). RAG_OFFLINE=1이면 fixture로 배선만.
-def retrieve_spec(query, index_dir, search_preview, py="python3.12", topk=5, work=None) -> "TaskSpec":
+def retrieve_spec(query, index_dir, search_preview, py="python3.12", topk=5, work=None,
+                  gcs_index=None, corpus=None) -> "TaskSpec":
     return TaskSpec(
         name="retrieve",
         goal=f"색인에서 질문에 맞는 사례를 검색해 근거와 함께 답하라: {query}",
         definition={"query": query, "index_dir": index_dir, "search_preview": search_preview,
-                    "py": py, "topk": topk, "work": work or os.path.expanduser("~/.orc_rag")},
+                    "py": py, "topk": topk, "work": work or os.path.expanduser("~/.orc_rag"),
+                    "gcs_index": gcs_index, "corpus": corpus},  # corpus=rag_units.jsonl(본문 근거)
         allowed_tools=["embedder", "faiss_index", "llm"],
         forbidden=["rm -rf /", "DROP TABLE"],
         steps=[
@@ -233,8 +235,10 @@ def retrieve_spec(query, index_dir, search_preview, py="python3.12", topk=5, wor
 # 실모드는 index_dir에 전체 색인(gs.../rag_index/full/idx_full)을 내려받아 두고 키 설정 후 실행.
 RETRIEVE = retrieve_spec(
     query="혼효림에서 풍속이 높을 때 주거지와 관광지 중 어디에 자원을 집중해야 합니까?",
-    index_dir="/tmp/idx_full",
+    index_dir=os.path.expanduser("~/Documents/Pred-FirefromElec/rag_index/idx_full_v2"),  # v2=수치헤더+오타통일(영구 보관)
     search_preview=os.path.expanduser("~/Documents/Pred-FirefromElec/scripts/search_preview.py"),
+    gcs_index="gs://constgx_electrofire/rag_index/full_v2/idx_full",  # 폴더 없으면 여기서 자동 재다운로드
+    corpus=os.path.expanduser("~/Documents/Pred-FirefromElec/scripts/rag_units_v2.jsonl"),  # 사례 본문+수치(근거 주입)
 )
 
 SPECS = {s.name: s for s in [COMPARE, INGEST_DEMO, INGEST_AIHUB, RETRIEVE]}
